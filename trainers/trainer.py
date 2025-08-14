@@ -40,7 +40,7 @@ class ModelSaver:
             filename = f"model_joint_{timestamp}.pt"
         
         save_path = self.checkpoints_dir / filename
-        torch.save(self.accelerator.unwrap_model(model).state_dict(), path)
+        torch.save(self.accelerator.unwrap_model(model).state_dict(), save_path)
         self.accelerator.print(f"Model saved to {save_path}")
     
     def save_metrics(self, metrics, task_name=None):
