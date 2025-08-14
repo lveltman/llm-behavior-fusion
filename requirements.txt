@@ -1,0 +1,24 @@
+# Основные зависимости с фиксированными версиями
+torch
+transformers
+jsonlines
+pathlib
+webencodings
+pydantic
+msgpack
+beautifulsoup4
+pygments
+tqdm
+colorama
+accelerate
+datasets
+deepspeed
+
+# Для обработки данных
+numpy
+scikit-learn
+rouge-score
+
+# Для работы с Hugging Face
+huggingface-hub
+tokenizers
