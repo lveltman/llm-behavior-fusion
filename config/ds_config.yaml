@@ -6,7 +6,7 @@ deepspeed_config:
   offload_optimizer_device: none
   offload_param_device: none
   zero3_init_flag: false
-  zero_stage: 2
+  zero_stage: 1
   train_micro_batch_size_per_gpu: 100  # = batch_size DataLoader
   train_batch_size: 200               # = batch_size * num_gpus
 
@@ -17,7 +17,7 @@ machine_rank: 0
 main_training_function: main
 mixed_precision: bf16
 num_machines: 1
-num_processes: 2
+num_processes: 4
 rdzv_backend: static
 same_network: true
 tpu_env: []

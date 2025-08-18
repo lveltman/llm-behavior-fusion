@@ -4,6 +4,9 @@ from sklearn.metrics import accuracy_score, f1_score, mean_absolute_error, mean_
 from rouge_score import rouge_scorer
 
 def compute_metric(metric_name, preds, labels, tokenizer):
+    print(f"preds = {preds}")
+    print(f"labels = {labels}")
+    print()
     if metric_name == "accuracy":
         return accuracy_score(labels, preds)
 
@@ -14,11 +17,12 @@ def compute_metric(metric_name, preds, labels, tokenizer):
         }
 
     elif metric_name == "regression":
-        preds_f = np.array([float(p.strip()) for p in preds])
+        # preds_f = np.array([float(p.strip()) for p in preds])
+        preds_f = np.array([float(p.strip()) if p.isdigit() else 0.0 for p in preds])
         labels_f = np.array([float(l.strip()) for l in labels])
         return {
             "mae": mean_absolute_error(labels_f, preds_f),
-            "rmse": mean_squared_error(labels_f, preds_f, squared=False)
+            "rmse": mean_squared_error(labels_f, preds_f)
         }
 
     elif metric_name == "rouge":

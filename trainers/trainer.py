@@ -4,6 +4,7 @@ from datetime import datetime
 from pathlib import Path
 import torch
 from torch.utils.data import DataLoader
+from transformers import get_linear_schedule_with_warmup
 from tqdm import tqdm
 
 from dataset.dataset import LaMPDataset, collate_fn
@@ -66,32 +67,42 @@ class TaskSequentialTrainer:
         self.accelerator = accelerator
         self.model = model
         self.optimizer = optimizer
+        self.scheduler = None
         self.llm_tokenizer = llm_tokenizer
         self.beh_tokenizer = beh_tokenizer
         self.saver = ModelSaver(accelerator)
     
-    def train(self, tasks, num_epochs, batch_size):
+    def train(self, tasks, num_epochs, batch_size, warmup_ratio):
         """Train model sequentially on each task"""
         for task_name, task_info in tasks.items():
             tasks_metrics = {}
             # if self.accelerator.is_local_main_process:
             self.accelerator.print(f"Starting training on task: {task_name}")
-            
+
             # Prepare data loaders
             train_loader, val_loader = self._prepare_data_loaders(
                 task_info["json_path"], 
                 batch_size
             )
+            steps_per_task = num_epochs * len(train_loader)
+            warmup_steps = int(warmup_ratio * steps_per_task)
+            self.scheduler = get_linear_schedule_with_warmup(self.optimizer, 
+                                                            num_warmup_steps=warmup_steps, 
+                                                            num_training_steps=steps_per_task
+                                                            )
+            # self.model, self.optimizer, train_loader, val_loader = self.accelerator.prepare(self.model, self.optimizer, train_loader, val_loader)
+            self.model, self.optimizer, self.scheduler, train_loader, val_loader = self.accelerator.prepare(self.model, self.optimizer, self.scheduler, train_loader, val_loader)
 
-            self.model, self.optimizer, train_loader, val_loader = self.accelerator.prepare(self.model, self.optimizer, train_loader, val_loader)
+            # train_loader, val_loader = self.accelerator.prepare(train_loader, val_loader)
             
             # Train on current task
+            self.model.train()
             self._train_task(train_loader, num_epochs)
             
             # Evaluate after each task
+            self.model.eval()
             metrics = self.evaluate(val_loader, task_info["metric"])
             tasks_metrics[task_name] = metrics
-            # if self.accelerator.is_local_main_process:
             self.accelerator.print(f"Metrics for {task_name} ({task_info['metric']}): {metrics}")
 
             # Save after each task
@@ -116,7 +127,7 @@ class TaskSequentialTrainer:
             llm_tokenizer=self.llm_tokenizer,
             beh_tokenizer=self.beh_tokenizer
         )
-        
+
         train_loader = DataLoader(
             train_dataset, 
             batch_size=batch_size, 
@@ -135,7 +146,6 @@ class TaskSequentialTrainer:
     
     def _train_task(self, train_loader, num_epochs):
         """Train model on a single task"""
-        self.model.train()
         
         for epoch in range(num_epochs):
             total_loss = 0
@@ -147,9 +157,6 @@ class TaskSequentialTrainer:
                 
                 if self.accelerator.is_local_main_process:
                     progress_bar.set_postfix({"loss": loss.item()})
-            
-            # avg_loss = total_loss / len(train_loader)
-            # self.accelerator.print(f"Epoch {epoch+1} Average Loss: {avg_loss:.4f}")
 
             # Синхронизация loss между процессами
             avg_loss = torch.tensor(total_loss / len(train_loader)).to(self.accelerator.device)
@@ -173,56 +180,49 @@ class TaskSequentialTrainer:
         
         self.accelerator.backward(loss)
         self.optimizer.step()
+        self.scheduler.step()
         self.optimizer.zero_grad()
         
         return loss
     
     def evaluate(self, val_loader, metric_name):
         """Evaluate model on validation data"""
-        self.model.eval()
         all_preds, all_labels = [], []
-        
-        with torch.no_grad():
-            for batch in tqdm(val_loader, desc="Evaluating", disable=not self.accelerator.is_local_main_process):
-                generated_ids = self.model.generate(
-                    input_ids=batch["input_ids"],
-                    attention_mask=batch["attention_mask"],
-                    beh_input_ids=batch["beh_input_ids"],
-                    beh_attention_mask=batch["beh_attention_mask"],
-                    max_length=150,
-                    num_beams=5,
-                    early_stopping=True
-                )
-                
-                # preds_text = self.llm_tokenizer.batch_decode(
-                #     generated_ids, 
-                #     skip_special_tokens=True
-                # )
-                # labels_text = self.llm_tokenizer.batch_decode(
-                #     batch["labels"], 
-                #     skip_special_tokens=True
-                # )
-                
-                # Синхронизация
-                generated_ids = self.accelerator.gather(
-                    self.accelerator.pad_across_processes(generated_ids, dim=1)
-                )
-                labels = self.accelerator.gather(
-                    self.accelerator.pad_across_processes(batch["labels"], dim=1)
-                )
-                
-                # Только на главном процессе
-                if self.accelerator.is_local_main_process:
-                    preds_text = self.llm_tokenizer.batch_decode(
-                        generated_ids.cpu(), 
-                        skip_special_tokens=True
+
+        with self.accelerator.autocast():
+            with torch.no_grad():
+                for batch in tqdm(val_loader, desc="Evaluating", disable=not self.accelerator.is_local_main_process):
+                    generated_ids = self.model.generate(
+                        input_ids=batch["input_ids"],
+                        attention_mask=batch["attention_mask"],
+                        beh_input_ids=batch["beh_input_ids"],
+                        beh_attention_mask=batch["beh_attention_mask"],
+                        max_length=150,
+                        temperature=0.7,
+                        num_beams=5,
+                        early_stopping=True
                     )
-                    labels_text = self.llm_tokenizer.batch_decode(
-                        labels.cpu(),
-                        skip_special_tokens=True
+                    
+                    # Синхронизация
+                    generated_ids = self.accelerator.gather(
+                        self.accelerator.pad_across_processes(generated_ids, dim=1)
                     )
-                    all_preds.extend(preds_text)
-                    all_labels.extend(labels_text)
+                    labels = self.accelerator.gather(
+                        self.accelerator.pad_across_processes(batch["labels"], dim=1)
+                    )
+                    
+                    # Только на главном процессе
+                    if self.accelerator.is_local_main_process:
+                        preds_text = self.llm_tokenizer.batch_decode(
+                            generated_ids.cpu(), 
+                            skip_special_tokens=True
+                        )
+                        labels_text = self.llm_tokenizer.batch_decode(
+                            labels.cpu(),
+                            skip_special_tokens=True
+                        )
+                        all_preds.extend(preds_text)
+                        all_labels.extend(labels_text)
         
         if self.accelerator.is_local_main_process:
             return compute_metric(metric_name, all_preds, all_labels, self.llm_tokenizer)
@@ -236,16 +236,32 @@ class JointTaskTrainer:
         self.accelerator = accelerator
         self.model = model
         self.optimizer = optimizer
+        self.scheduler = None
         self.llm_tokenizer = llm_tokenizer
         self.beh_tokenizer = beh_tokenizer
         self.saver = ModelSaver(accelerator)
     
-    def train(self, json_path, num_epochs, batch_size):
+    def train(self, json_path, num_epochs, batch_size, warmup_ratio):
         """Train model on combined dataset"""
         train_loader = self._prepare_data_loader(json_path, batch_size)
-        self.model, self.optimizer, train_loader = self.accelerator.prepare(self.model, self.optimizer, train_loader)
+
+        total_training_steps = len(train_loader)
+        warmup_steps = int(warmup_ratio * total_training_steps)
+        self.scheduler = get_linear_schedule_with_warmup(self.optimizer, 
+                                                        num_warmup_steps=warmup_steps, 
+                                                        num_training_steps=total_training_steps
+                                                       )
+        self.model, self.optimizer, self.scheduler, train_loader = self.accelerator.prepare(self.model, self.optimizer, self.scheduler, train_loader)
         
         self.model.train()
+
+        trainable_params = sum(p.numel() for p in self.model.parameters() if p.requires_grad)
+        frozen_params = sum(p.numel() for p in self.model.parameters() if not p.requires_grad)
+        total_params = sum(p.numel() for p in self.model.parameters())
+        
+        print(f"Trainable params: {trainable_params} ({trainable_params/total_params*100:.2f}%)")
+        print(f"Frozen params: {frozen_params} ({frozen_params/total_params*100:.2f}%)")
+        
         for epoch in range(num_epochs):
             total_loss = 0
             progress_bar = tqdm(train_loader, desc=f"Epoch {epoch+1}", disable=not self.accelerator.is_local_main_process)
@@ -253,14 +269,9 @@ class JointTaskTrainer:
             for batch in progress_bar:
                 loss = self._process_batch(batch)
                 total_loss += loss.item()
-                # progress_bar.set_postfix({"loss": loss.item()})
+
                 if self.accelerator.is_local_main_process:
                     progress_bar.set_postfix({"loss": loss.item()})
-            
-            # avg_loss = total_loss / len(train_loader)
-            # self.accelerator.print(f"Epoch {epoch+1} Average Loss: {avg_loss:.4f}")
-            # # Save checkpoint each epoch
-            # self.saver.save_model(self.model, epoch=epoch+1)
             
             # Синхронизация loss
             avg_loss = torch.tensor(total_loss / len(train_loader)).to(self.accelerator.device)
@@ -269,7 +280,6 @@ class JointTaskTrainer:
             if self.accelerator.is_local_main_process:
                 self.accelerator.print(f"Epoch {epoch+1} Average Loss: {avg_loss:.4f}")
                 self.saver.save_model(self.model, epoch=epoch+1)
-        # if self.accelerator.is_local_main_process:
         self.accelerator.print("Joint training completed.")
         return self.model
     
@@ -303,6 +313,7 @@ class JointTaskTrainer:
         
         self.accelerator.backward(loss)
         self.optimizer.step()
+        self.scheduler.step()
         self.optimizer.zero_grad()
         
         return loss
@@ -323,21 +334,21 @@ class ModelEvaluator:
         tasks_metrics = {}
         
         for task_name, task_info in tasks.items():
-            # if self.accelerator.is_local_main_process:
             self.accelerator.print(f"Evaluating on task: {task_name}")
             
             val_loader = self._prepare_data_loader(
                 task_info["json_path"].replace("train", "dev"),
                 batch_size
             )
-            
+
+            val_loader = self.accelerator.prepare(val_loader)
+
             metrics = self._evaluate_task(val_loader, task_info["metric"])
             tasks_metrics[task_name] = metrics
-            # if self.accelerator.is_local_main_process:
+
             self.accelerator.print(f"Metrics for {task_name} ({task_info['metric']}): {metrics}")
 
         # Save all metrics together
-        # self.saver.save_metrics(tasks_metrics)
         if self.accelerator.is_local_main_process and metrics is not None:
             self.saver.save_metrics(tasks_metrics)
         return tasks_metrics
@@ -359,43 +370,44 @@ class ModelEvaluator:
     
     def _evaluate_task(self, val_loader, metric_name):
         """Evaluate model on a single task"""
-        self.model.eval()
         all_preds, all_labels = [], []
-        
-        with torch.no_grad():
-            for batch in tqdm(val_loader, desc="Evaluating", 
-                             disable=not self.accelerator.is_local_main_process):
-                generated_ids = self.model.generate(
-                    input_ids=batch["input_ids"],
-                    attention_mask=batch["attention_mask"],
-                    beh_input_ids=batch["beh_input_ids"],
-                    beh_attention_mask=batch["beh_attention_mask"],
-                    max_length=150,
-                    num_beams=5,
-                    early_stopping=True
-                )
-                
-                # Синхронизация
-                generated_ids = self.accelerator.gather(
-                    self.accelerator.pad_across_processes(generated_ids, dim=1)
-                )
-                labels = self.accelerator.gather(
-                    self.accelerator.pad_across_processes(batch["labels"], dim=1)
-                )
-                
-                # Только на главном процессе
-                if self.accelerator.is_local_main_process:
-                    preds_text = self.llm_tokenizer.batch_decode(
-                        generated_ids.cpu(), 
-                        skip_special_tokens=True
+
+        with self.accelerator.autocast():
+            with torch.no_grad():
+                for batch in tqdm(val_loader, desc="Evaluating", 
+                                 disable=not self.accelerator.is_local_main_process):
+                    generated_ids = self.model.generate(
+                        input_ids=batch["input_ids"],
+                        attention_mask=batch["attention_mask"],
+                        beh_input_ids=batch["beh_input_ids"],
+                        beh_attention_mask=batch["beh_attention_mask"],
+                        max_length=150,
+                        temperature=0.7,
+                        num_beams=5,
+                        early_stopping=True
                     )
-                    labels_text = self.llm_tokenizer.batch_decode(
-                        labels.cpu(),
-                        skip_special_tokens=True
+                    
+                    # Синхронизация
+                    generated_ids = self.accelerator.gather(
+                        self.accelerator.pad_across_processes(generated_ids, dim=1)
                     )
-                    all_preds.extend(preds_text)
-                    all_labels.extend(labels_text)
-        
+                    labels = self.accelerator.gather(
+                        self.accelerator.pad_across_processes(batch["labels"], dim=1)
+                    )
+                    
+                    # Только на главном процессе
+                    if self.accelerator.is_local_main_process:
+                        preds_text = self.llm_tokenizer.batch_decode(
+                            generated_ids.cpu(), 
+                            skip_special_tokens=True
+                        )
+                        labels_text = self.llm_tokenizer.batch_decode(
+                            labels.cpu(),
+                            skip_special_tokens=True
+                        )
+                        all_preds.extend(preds_text)
+                        all_labels.extend(labels_text)
+            
         if self.accelerator.is_local_main_process:
             return compute_metric(metric_name, all_preds, all_labels, self.llm_tokenizer)
         return None

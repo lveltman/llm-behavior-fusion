@@ -9,10 +9,10 @@ class BehavioralEncoder(nn.Module):
         self.text_encoder = AutoModel.from_pretrained(encoder_name)
 
     def forward(self, input_ids, attention_mask):
-        # Получаем эмбеддинги поведенческих токенов (B, L, H)
-        outputs = self.text_encoder(input_ids=input_ids, attention_mask=attention_mask)
+        with torch.no_grad():
+            # Получаем эмбеддинги поведенческих токенов (B, L, H)
+            outputs = self.text_encoder(input_ids=input_ids, attention_mask=attention_mask)
         return outputs.last_hidden_state  # (B, L, H)
-
 
 class QFormer(nn.Module):
     def __init__(self, hidden_size, num_queries=8, num_layers=2, num_heads=8):
@@ -39,22 +39,8 @@ class FusionModel(nn.Module):
         super().__init__()
         self.llm = AutoModelForSeq2SeqLM.from_pretrained(llm_name)
         
-        # Полная заморозка весов LLM
-        for param in self.llm.parameters():
-            param.requires_grad = False
-        
         # Префикс-проекция из QFormer hidden_size в LLM d_model
         self.prefix_proj = nn.Linear(beh_hidden_size, self.llm.config.d_model)
-
-        # Явно переводим LLM в eval при инициализации
-        self.llm.eval()
-
-    def train(self, mode: bool=True):
-        # Стандартное поведение train для остальных слоёв
-        super().train(mode)
-        # LLM всегда в eval, вне зависимости от mode
-        self.llm.eval()
-        return self
 
     def forward(self, input_ids, attention_mask, qformer_output, labels=None, **generate_kwargs):
         # Маппинг QFormer → LLM embedding space
@@ -62,7 +48,7 @@ class FusionModel(nn.Module):
 
         # Эмбеддинги исходных токенов LLM (замороженные)
         with torch.no_grad():
-            inputs_embeds = self.llm.get_encoder().embed_tokens(input_ids)
+            inputs_embeds = self.llm.encoder.embed_tokens(input_ids)
 
         # Склеиваем по seq_len: [prefix_embs, inputs_embeds]
         inputs_embeds = torch.cat([prefix_embs, inputs_embeds], dim=1)
@@ -86,7 +72,7 @@ class FusionModel(nn.Module):
     def generate(self, input_ids, attention_mask, qformer_output, **generate_kwargs):
         prefix_embs = self.prefix_proj(qformer_output)
         with torch.no_grad():
-            inputs_embeds = self.llm.get_encoder().embed_tokens(input_ids)
+            inputs_embeds = self.llm.encoder.embed_tokens(input_ids)
         inputs_embeds = torch.cat([prefix_embs, inputs_embeds], dim=1)
         prefix_mask = torch.ones(prefix_embs.size()[:2], device=attention_mask.device, dtype=attention_mask.dtype)
         attention_mask = torch.cat([prefix_mask, attention_mask], dim=1)
@@ -104,6 +90,50 @@ class BehavioralTwin(nn.Module):
         self.beh_encoder = beh_encoder
         self.qformer = qformer
         self.fusion = fusion
+
+class BehavioralTwin(nn.Module):
+    def __init__(self, beh_encoder, qformer, fusion):
+        super().__init__()
+        self.beh_encoder = beh_encoder
+        self.qformer = qformer
+        self.fusion = fusion
+
+    def train(self, mode: bool = True):
+        super().train(mode)
+
+        if mode:
+            # Замораживаем encoder + LLM
+            self.beh_encoder.eval()
+            self.fusion.llm.eval()
+            
+            # Разморозка только QFormer и prefix_proj
+            self.qformer.train()
+            self.fusion.prefix_proj.train()
+            
+            # Запрещаем градиенты у encoder/LLM
+            for p in self.beh_encoder.parameters():
+                p.requires_grad = False
+            for p in self.fusion.llm.parameters():
+                p.requires_grad = False
+            
+            # Разрешаем градиенты у QFormer + prefix_proj
+            for p in self.qformer.parameters():
+                p.requires_grad = True
+            for p in self.fusion.prefix_proj.parameters():
+                p.requires_grad = True
+        else:
+            # Если mode=False → ставим всё в eval
+            self.eval()
+        
+        return self
+
+    def eval(self):
+        # Просто переводим все блоки в eval
+        self.beh_encoder.eval()
+        self.qformer.eval()
+        self.fusion.eval()
+        self.fusion.llm.eval()  # чтобы точно не включился train
+        return self
 
     def forward(self, input_ids, attention_mask, beh_input_ids, beh_attention_mask, labels=None):
         beh_embs = self.beh_encoder(beh_input_ids, beh_attention_mask)  # (B, L, H)

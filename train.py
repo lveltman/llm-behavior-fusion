@@ -3,49 +3,35 @@ from accelerate import Accelerator
 from transformers import AutoTokenizer
 
 from model import BehavioralEncoder, QFormer, FusionModel, BehavioralTwin
-from trainers.trainer import TaskSequentialTrainer, JointTaskTrainer, ModelEvaluator
+from trainers.trainer import TaskSequentialTrainer, JointTaskTrainer, ModelEvaluator, ModelSaver
 
 
 if __name__ == "__main__":
-    # Initialize accelerator and model components
+    from accelerate import Accelerator
+    import torch
+    from transformers import AutoTokenizer
+    
     accelerator = Accelerator()
-
-    # Choose training mode
-    mode = "sequential"  # or "joint"
-    # Model configuration
+    
+    mode = "joint"       # "joint", "sequential", "eval_only"
+    resume_from = None
+    num_epochs = 10
+    batch_size = 24
+    lr = 1e-4
+    warmup_ratio = 0.1   # warmup 10% шагов
+    
     beh_enc_name = "BAAI/bge-base-en-v1.5"
-    llm_name = "google/flan-t5-base"
+    llm_name = "google/flan-t5-xl"
     dim = 768
     
-    # Training configuration
-    num_epochs = 5
-    batch_size = 100
-    
-    # Task definitions
     tasks = {
-        "LaMP-1": {
-            "json_path": "data/LaMP_1/train.json",
-            "metric": "accuracy"
-        },
-        "LaMP-3": {
-            "json_path": "data/LaMP_3/train.json",
-            "metric": "regression"
-        },
-        "LaMP-4": {
-            "json_path": "data/LaMP_4/train.json",
-            "metric": "rouge"
-        },
-        "LaMP-5": {
-            "json_path": "data/LaMP_5/train.json",
-            "metric": "rouge"
-        },
-        "LaMP-7": {
-            "json_path": "data/LaMP_7/train.json",
-            "metric": "rouge"
-        },
+        "LaMP-1": {"json_path": "data/LaMP_1/train.json", "metric": "accuracy"},
+        "LaMP-3": {"json_path": "data/LaMP_3/train.json", "metric": "regression"},
+        "LaMP-4": {"json_path": "data/LaMP_4/train.json", "metric": "rouge"},
+        "LaMP-5": {"json_path": "data/LaMP_5/train.json", "metric": "rouge"},
+        "LaMP-7": {"json_path": "data/LaMP_7/train.json", "metric": "rouge"},
     }
     
-    # Initialize tokenizers and model
     llm_tokenizer = AutoTokenizer.from_pretrained(llm_name)
     beh_tokenizer = AutoTokenizer.from_pretrained(beh_enc_name)
     
@@ -55,21 +41,30 @@ if __name__ == "__main__":
         FusionModel(llm_name=llm_name, beh_hidden_size=dim)
     )
     
-    optimizer = torch.optim.AdamW(model.parameters(), lr=1e-4)
+    optimizer = torch.optim.AdamW(model.parameters(), lr=lr)
     
-    if mode == "sequential":
-        trainer = TaskSequentialTrainer(
-            accelerator, model, optimizer, llm_tokenizer, beh_tokenizer
-        )
-        model = trainer.train(tasks, num_epochs, batch_size)
+    if resume_from:
+        accelerator.print(f"Loading checkpoint from {resume_from}")
+        state_dict = torch.load(resume_from, map_location="cpu")
+        model.load_state_dict(state_dict)
+    
+    if mode == "joint":
+        # prepare model+optimizer+dataloader
+        trainer = JointTaskTrainer(accelerator, model, optimizer, llm_tokenizer, beh_tokenizer)
+        model = trainer.train("data/lamp_all_train.json", num_epochs, batch_size, warmup_ratio)
+    
+    elif mode == "sequential":
+        trainer = TaskSequentialTrainer(accelerator, model, optimizer, llm_tokenizer, beh_tokenizer)
+        model = trainer.train(tasks, num_epochs, batch_size, warmup_ratio)
+    
+    elif mode == "eval_only":
+        accelerator.print("Evaluation only mode — skipping training.")
+        model.to(accelerator.device)
     else:
-        trainer = JointTaskTrainer(
-            accelerator, model, optimizer, llm_tokenizer, beh_tokenizer
-        )
-        model = trainer.train("data/lamp_all_train.json", num_epochs, batch_size)
+        raise ValueError(f"Unknown mode {mode}")
     
-    # Evaluate final model
+    accelerator.print("Running final evaluation...")
+    model.eval()
     evaluator = ModelEvaluator(accelerator, model, llm_tokenizer, beh_tokenizer)
     final_metrics = evaluator.evaluate(tasks)
-
-    ModelSaver(accelerator).save_model(model, "final")
+    accelerator.print(f"Final metrics: {final_metrics}")
