@@ -91,13 +91,6 @@ class BehavioralTwin(nn.Module):
         self.qformer = qformer
         self.fusion = fusion
 
-class BehavioralTwin(nn.Module):
-    def __init__(self, beh_encoder, qformer, fusion):
-        super().__init__()
-        self.beh_encoder = beh_encoder
-        self.qformer = qformer
-        self.fusion = fusion
-
     def train(self, mode: bool = True):
         super().train(mode)
 
