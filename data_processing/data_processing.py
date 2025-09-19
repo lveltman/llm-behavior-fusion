@@ -14,26 +14,6 @@ def download_file(url, save_path):
     print(f"Saved to {save_path}")
 
 
-base_url = "https://ciir.cs.umass.edu/downloads/LaMP/time/LaMP_1/train/"
-os.makedirs("data/LaMP_1/train", exist_ok=True)
-
-download_file(base_url + "train_questions.json", "data/LaMP_1/train/train_questions.json")
-download_file(base_url + "train_outputs.json", "data/LaMP_1/train/train_outputs.json")
-
-
-datasets = [1, 3, 4, 5, 7]
-
-for dataset in datasets:
-    base_url = f"https://ciir.cs.umass.edu/downloads/LaMP/time/LaMP_{dataset}/train/"
-    os.makedirs(f"..data/LaMP_{dataset}/train", exist_ok=True)
-    os.makedirs(f"../data/LaMP_{dataset}/dev", exist_ok=True)
-    
-    download_file(base_url + "train_questions.json", f"data/LaMP_{dataset}/train/train_questions.json")
-    download_file(base_url + "train_outputs.json", f"data/LaMP_{dataset}/train/train_outputs.json")
-
-    download_file(base_url + "dev_questions.json", f"../data/LaMP_{dataset}/dev/dev_questions.json")
-    download_file(base_url + "dev_outputs.json", f"../data/LaMP_{dataset}/dev/dev_outputs.json")
-
 def normalize_profile(profile_item):
     parts = []
     if "title" in profile_item and profile_item["title"]:
@@ -50,7 +30,7 @@ def normalize_profile(profile_item):
         parts.append(f"ID: {profile_item['id']}")
     return " ".join(parts)
 
-def preprocess_all_lamp(datasets, base_dir="data", split="train", save_path="data/lamp_all_train.json"):
+def preprocess_all_lamp(datasets, base_dir="data", split="train", save_path="data/lamp_all_train.json", num_profiles=6):
     all_data = []
 
     for dataset_id in datasets:
@@ -69,7 +49,13 @@ def preprocess_all_lamp(datasets, base_dir="data", split="train", save_path="dat
             if q_id not in outputs_map:
                 continue
 
-            profiles_norm = [normalize_profile(p) for p in q["profile"]]
+            profiles_norm = []
+            for i, profile in enumerate(q["profile"]):
+                if i == num_profiles:
+                    break
+                norm_profile = normalize_profile(profile)
+                profiles_norm.append(norm_profile)
+            # profiles_norm = [normalize_profile(p) for p in q["profile"]]
             # scores = [int(p["score"]) if "score" in p and p["score"] not in (None, "") else None for p in q["profile"]]
 
             all_data.append({
@@ -88,7 +74,25 @@ def preprocess_all_lamp(datasets, base_dir="data", split="train", save_path="dat
     print(f"Saved combined dataset to {save_path}, total {len(all_data)} examples")
 
 
+
+datasets = [1, 3, 4, 5, 7]
+datasets = [1]
+for dataset in datasets:
+    base_url = f"https://ciir.cs.umass.edu/downloads/LaMP/time/LaMP_{dataset}/train/"
+    os.makedirs(f"..data/LaMP_{dataset}/train", exist_ok=True)
+    os.makedirs(f"../data/LaMP_{dataset}/dev", exist_ok=True)
+    
+    download_file(base_url + "train_questions.json", f"../data/LaMP_{dataset}/train/train_questions.json")
+    download_file(base_url + "train_outputs.json", f"../data/LaMP_{dataset}/train/train_outputs.json")
+
+    base_url = f"https://ciir.cs.umass.edu/downloads/LaMP/time/LaMP_{dataset}/dev/"
+    download_file(base_url + "dev_questions.json", f"../data/LaMP_{dataset}/dev/dev_questions.json")
+    download_file(base_url + "dev_outputs.json", f"../data/LaMP_{dataset}/dev/dev_outputs.json")
+
+
 dataset_ids = [1, 3, 4, 5, 7]
+
+dataset_ids = [1]
 
 for dataset_id in dataset_ids:
     preprocess_all_lamp(
@@ -109,5 +113,5 @@ for dataset_id in dataset_ids:
 #     datasets=[1, 3, 4, 5, 7],
 #     base_dir="data",
 #     split="train",
-#     save_path="../data/lamp_all_train.json"
+#     save_path="data/lamp_all_train.json"
 # )
