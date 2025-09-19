@@ -1,14 +1,16 @@
 compute_environment: LOCAL_MACHINE
 debug: false
 deepspeed_config:
+  # deepspeed_config_file: config/deepspeed_config_stage2.json
+  zero3_init_flag: false
+  zero3_save_16bit_model: true
   gradient_accumulation_steps: 1
   gradient_clipping: 1.0
   offload_optimizer_device: none
   offload_param_device: none
-  zero3_init_flag: false
-  zero_stage: 1
+  zero_stage: 2
   train_micro_batch_size_per_gpu: 8  # = batch_size DataLoader
-  train_batch_size: 16               # = batch_size * num_gpus
+  train_batch_size: 8            # = batch_size * num_gpus
 
 distributed_type: DEEPSPEED
 downcast_bf16: 'no'
@@ -17,11 +19,10 @@ machine_rank: 0
 main_training_function: main
 mixed_precision: bf16
 num_machines: 1
-num_processes: 4
+num_processes: 1
 rdzv_backend: static
 same_network: true
 tpu_env: []
 tpu_use_cluster: false
 tpu_use_sudo: false
 use_cpu: false
-

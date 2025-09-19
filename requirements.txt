@@ -13,6 +13,9 @@ colorama
 accelerate
 datasets
 deepspeed
+bitsandbytes
+optuna
+typing_extensions
 
 # Для обработки данных
 numpy
@@ -22,3 +25,4 @@ rouge-score
 # Для работы с Hugging Face
 huggingface-hub
 tokenizers
+
