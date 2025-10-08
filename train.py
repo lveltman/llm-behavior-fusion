@@ -16,6 +16,7 @@ if __name__ == "__main__":
     
     mode = "sequential"       # "joint", "sequential", "eval_only"
     resume_from = None #"saved/checkpoints/model_LaMP-1_epoch10_20250830_220244.pt"
+    # resume_from = "saved/checkpoints/bge_base_flan_t5_xxl_new_qformer_LaMP-1_epoch3_20251005_203544.pt"
     num_epochs = 3
     batch_size = 2
 
@@ -25,14 +26,20 @@ if __name__ == "__main__":
 
     beh_enc_name = "BAAI/bge-base-en-v1.5"
     # beh_enc_name = "facebook/contriever"
-    
+    # beh_enc_name = "Alibaba-NLP/gte-large-en-v1.5"
+    beh_enc_name = "BAAI/bge-m3"
     # llm_name = "google/flan-t5-xl"
     # llm_name = "google/flan-t5-xxl"
     llm_name = "Qwen/Qwen2-7B"
 
-    max_len_beh = 512
+    # warmup_ratio = 0.053494464405939135, 'num_queries': 11, 'weight_decay': 0.0010468580083440608, 'lr': 0.00048789888760538466, 'beta1': 0.9165027242838241, 'beta2': 0.9412469564025118}
+    
+
+    exp_name = "bge_m3_qwen_new_qformer"
+    
+    max_len_beh = 512 if "base" in beh_enc_name else 1024
     llm_type = "decoder-only" if 'qwen' in llm_name.lower() else "encoder-decoder"
-    max_len_llm = 2084 if llm_type == "decoder-only" else 512 # or 1024 for flan
+    max_len_llm = 2048 if llm_type == "decoder-only" else 512 # or 1024 for flan
 
     print(llm_type)
     print(max_len_llm)
@@ -85,13 +92,13 @@ if __name__ == "__main__":
         # prepare model+optimizer+dataloader
         trainer = JointTaskTrainer(accelerator, model, optimizer,
                                    llm_tokenizer, beh_tokenizer, beh_tokenizer,
-                                   max_len_llm, max_len_beh, llm_type)
+                                   max_len_llm, max_len_beh, llm_type, exp_name)
         model = trainer.train("data/lamp_all_train.json", num_epochs, batch_size, warmup_ratio)
     
     elif mode == "sequential":
         trainer = TaskSequentialTrainer(accelerator, model, optimizer,
                                         llm_tokenizer, beh_tokenizer, beh_tokenizer,
-                                        max_len_llm, max_len_beh, llm_type)
+                                        max_len_llm, max_len_beh, llm_type, exp_name)
         model = trainer.train(tasks, num_epochs, batch_size, warmup_ratio)
     
     elif mode == "eval_only":
@@ -102,8 +109,8 @@ if __name__ == "__main__":
     
     accelerator.print("Running final evaluation...")
     model.eval()
-    evaluator = ModelEvaluator(accelerator, model, optimizer,
-                               llm_tokenizer, beh_tokenizer, beh_tokenizer,
-                               max_len_llm, max_len_beh, llm_type)
+    evaluator = ModelEvaluator(accelerator, model,
+                                llm_tokenizer, beh_tokenizer, beh_tokenizer,
+                                max_len_llm, max_len_beh, llm_type, exp_name)
     final_metrics = evaluator.evaluate(tasks)
     accelerator.print(f"Final metrics: {final_metrics}")

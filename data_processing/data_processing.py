@@ -20,14 +20,14 @@ def normalize_profile(profile_item):
         parts.append(f"TITLE: {profile_item['title']}")
     if "abstract" in profile_item and profile_item["abstract"]:
         parts.append(f"ABSTRACT: {profile_item['abstract']}")
-    if "text" in profile_item and profile_item["text"]:
-        parts.append(f"TEXT: {profile_item['text']}")
-    if "score" in profile_item and profile_item["score"] not in (None, ""):
-        parts.append(f"SCORE: {profile_item['score']}")
-    if "date" in profile_item and profile_item["date"]:
-        parts.append(f"DATE: {profile_item['date']}")
-    if "id" in profile_item and profile_item["id"]:
-        parts.append(f"ID: {profile_item['id']}")
+    # if "text" in profile_item and profile_item["text"]:
+    #     parts.append(f"TEXT: {profile_item['text']}")
+    # if "score" in profile_item and profile_item["score"] not in (None, ""):
+    #     parts.append(f"SCORE: {profile_item['score']}")
+    # if "date" in profile_item and profile_item["date"]:
+    #     parts.append(f"DATE: {profile_item['date']}")
+    # if "id" in profile_item and profile_item["id"]:
+    #     parts.append(f"ID: {profile_item['id']}")
     return " ".join(parts)
 
 def preprocess_all_lamp(datasets, base_dir="data", split="train", save_path="data/lamp_all_train.json", num_profiles=6):
@@ -99,19 +99,14 @@ for dataset_id in dataset_ids:
         datasets=[dataset_id],
         base_dir="../data",
         split="train",
-        save_path=f"../data/LaMP_{dataset_id}/train.json"
+        save_path=f"../data/LaMP_{dataset_id}/train.json",
+        num_profiles=16
     )
     preprocess_all_lamp(
         datasets=[dataset_id],
         base_dir="../data",
         split="dev",
-        save_path=f"../data/LaMP_{dataset_id}/dev.json"
+        save_path=f"../data/LaMP_{dataset_id}/dev.json",
+        num_profiles=16
     )
-    
-# # Пример
-# preprocess_all_lamp(
-#     datasets=[1, 3, 4, 5, 7],
-#     base_dir="data",
-#     split="train",
-#     save_path="data/lamp_all_train.json"
-# )
+

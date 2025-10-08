@@ -6,22 +6,41 @@ from transformers import AutoModel, AutoModelForSeq2SeqLM, AutoModelForCausalLM
 class BehavioralEncoder(nn.Module):
     def __init__(self, encoder_name="BAAI/bge-base-en-v1.5"):
         super().__init__()
-        self.text_encoder = AutoModel.from_pretrained(encoder_name)
+        self.text_encoder = AutoModel.from_pretrained(encoder_name, trust_remote_code=True)
 
     def forward(self, input_ids, attention_mask):
         with torch.no_grad():
             outputs = self.text_encoder(input_ids=input_ids, attention_mask=attention_mask)
         return outputs.last_hidden_state  # (B, L, H)
 
-
 class QFormer(nn.Module):
-    def __init__(self, hidden_size, num_queries=8, num_layers=2, num_heads=8):
+    def __init__(self, hidden_size, num_queries=8, num_layers=2, num_heads=8, dropout=0.1):
         super().__init__()
         self.query_tokens = nn.Parameter(torch.randn(1, num_queries, hidden_size))
+
+        # Cross-attention: queries ↔ behavior
+        self.cross_attn_beh = nn.MultiheadAttention(
+            embed_dim=hidden_size,
+            num_heads=num_heads,
+            dropout=dropout,
+            batch_first=True
+        )
+
+        # Cross-attention: queries ↔ input
+        self.cross_attn_inp = nn.MultiheadAttention(
+            embed_dim=hidden_size,
+            num_heads=num_heads,
+            dropout=dropout,
+            batch_first=True
+        )
+
+        # Доп. трансформер для смешивания уже "обогащённых" queries
         encoder_layer = nn.TransformerEncoderLayer(
-            d_model=hidden_size, nhead=num_heads, batch_first=True
+            d_model=hidden_size, nhead=num_heads, dropout=dropout, batch_first=True
         )
         self.transformer = nn.TransformerEncoder(encoder_layer, num_layers=num_layers)
+
+        self.norm = nn.LayerNorm(hidden_size)
 
     def forward(self, behavioral_embs, input_embs):
         """
@@ -29,19 +48,21 @@ class QFormer(nn.Module):
         input_embs: [B, L, H]
         """
         B = behavioral_embs.size(0)
-        queries = self.query_tokens.expand(B, -1, -1)  # [B, num_queries, H]
+        queries = self.query_tokens.expand(B, -1, -1)  # [B, Q, H]
 
-        # Усредняем по seq_len, чтобы уменьшить длину последовательности
-        pooled_behavior = behavioral_embs.mean(dim=1, keepdim=True)  # [B, 1, H]
-        pooled_input = input_embs.mean(dim=1, keepdim=True)          # [B, 1, H]
+        # (1) queries attends to behavioral history
+        q_beh, _ = self.cross_attn_beh(queries, behavioral_embs, behavioral_embs)
+        queries = self.norm(queries + q_beh)  # residual
 
-        # Конкат: queries + средние эмбеддинги
-        combined_context = torch.cat([queries, pooled_behavior, pooled_input], dim=1)  # [B, Q+2, H]
-        output = self.transformer(combined_context)
+        # (2) queries attends to input embeddings
+        q_inp, _ = self.cross_attn_inp(queries, input_embs, input_embs)
+        queries = self.norm(queries + q_inp)
 
-        # Возвращаем только query tokens
-        learned_queries = output[:, :queries.size(1), :]  # [B, Q, H]
-        return learned_queries
+        # (3) feed through transformer encoder (self-attn внутри queries)
+        queries = self.transformer(queries)
+
+        return queries  # [B, Q, H]
+
 
 
 class FusionModel(nn.Module):
@@ -60,15 +81,36 @@ class FusionModel(nn.Module):
             llm_hidden_size = self.llm.config.d_model
 
         # Префикс-проекция из QFormer hidden_size в LLM hidden_size
-        self.prefix_proj = nn.Linear(beh_hidden_size, llm_hidden_size)
+        # self.prefix_proj = nn.Linear(beh_hidden_size, llm_hidden_size)
+        self.prefix_proj = nn.Sequential(
+            nn.Linear(beh_hidden_size, llm_hidden_size),
+            nn.LayerNorm(llm_hidden_size),
+            nn.GELU(),
+            nn.Dropout(0.1),
+            nn.Linear(llm_hidden_size, llm_hidden_size),
+        )
         
         # Добавим обучаемый токен инструкции
-        self.instruction_embedding = nn.Parameter(torch.randn(1, 1, llm_hidden_size))
+        # self.instruction_embedding = nn.Parameter(torch.randn(1, 1, llm_hidden_size))
+        
+        # Множественные токены (8-16)
+        self.num_instruction_tokens = 8 #num_instruction_tokens
+        instruction_init = torch.zeros(1, self.num_instruction_tokens, llm_hidden_size)
+        nn.init.xavier_normal_(instruction_init)
+        self.instruction_embedding = nn.Parameter(instruction_init)
+        # Дополнительная обработка
+        self.instruction_processor = nn.Sequential(
+            nn.Linear(llm_hidden_size, llm_hidden_size),
+            nn.LayerNorm(llm_hidden_size),
+            nn.Tanh()
+        )
 
     def forward(self, input_ids, attention_mask, qformer_output, labels=None, **kwargs):
         # Маппинг QFormer → LLM embedding space
         prefix_embs = self.prefix_proj(qformer_output)  # (B, Q, hidden_size)
         instruction_embs = self.instruction_embedding.expand(input_ids.size(0), -1, -1)
+
+        instruction_embs = self.instruction_processor(instruction_embs)
         
         # Получаем эмбеддинги исходных токенов
         with torch.no_grad():
@@ -87,25 +129,25 @@ class FusionModel(nn.Module):
 
         if labels is None:
             raise ValueError("For generation use .generate() method!")
-
+        
         if not self.is_encoder_decoder and labels is not None:
-            # для decoder-only: смещаем labels на длину instruction + prefix
-            new_labels = torch.full((labels.size(0), inputs_embeds.size(1)), -100, device=labels.device, dtype=labels.dtype)
-            new_labels[:, instruction_embs.size(1)+prefix_embs.size(1):] = labels
+    #         # для decoder-only: смещаем labels на длину instruction + prefix
+    #         new_labels = torch.full((labels.size(0), inputs_embeds.size(1)), -100, device=labels.device, dtype=labels.dtype)
+    #         new_labels[:, instruction_embs.size(1)+prefix_embs.size(1):] = labels
+    #         labels = new_labels
+
+            # labels: [B, seq_len_input+output]
+            batch_size = labels.size(0)
+            total_len = inputs_embeds.size(1)  # instruction + prefix + input
+            new_labels = torch.full((batch_size, total_len), -100, device=labels.device, dtype=labels.dtype)
+        
+            instr_len = instruction_embs.size(1)
+            prefix_len = prefix_embs.size(1)
+            input_len = labels.size(1)  # длина исходного labels (input+output)
+        
+            # записываем в конце: начиная после instruction+prefix
+            new_labels[:, instr_len + prefix_len : instr_len + prefix_len + input_len] = labels
             labels = new_labels
-
-    #         # labels: [B, seq_len_input+output]
-    # batch_size = labels.size(0)
-    # total_len = inputs_embeds.size(1)  # instruction + prefix + input
-    # new_labels = torch.full((batch_size, total_len), -100, device=labels.device, dtype=labels.dtype)
-
-    # instr_len = instruction_embs.size(1)
-    # prefix_len = prefix_embs.size(1)
-    # input_len = labels.size(1)  # длина исходного labels (input+output)
-
-    # # записываем в конце: начиная после instruction+prefix
-    # new_labels[:, instr_len + prefix_len : instr_len + prefix_len + input_len] = labels
-    # labels = new_labels
 
     
         # Прогон через LLM

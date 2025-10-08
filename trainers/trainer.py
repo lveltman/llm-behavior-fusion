@@ -31,39 +31,56 @@ class ModelSaver:
         """Get current timestamp for unique filenames"""
         return datetime.now().strftime("%Y%m%d_%H%M%S")
     
-    def save_model(self, model, task_name=None, epoch=None):
+    def save_model(self, model, exp_name="exp", task_name=None, epoch=None):
         """Save model checkpoint"""
         timestamp = self.get_timestamp()
         
         if task_name and epoch:
-            filename = f"model_{task_name}_epoch{epoch}_{timestamp}.pt"
+            filename = f"{exp_name}_{task_name}_epoch{epoch}_{timestamp}.pt"
         else:
-            filename = f"model_joint_{timestamp}.pt"
+            filename = f"{exp_name}_{timestamp}.pt"
         
         save_path = self.checkpoints_dir / filename
         torch.save(self.accelerator.unwrap_model(model).state_dict(), save_path)
         self.accelerator.print(f"Model saved to {save_path}")
     
-    def save_metrics(self, metrics, task_name=None):
+    def save_metrics(self, metrics, task_name=None, exp_name=None):
         """Save metrics to JSON file"""
-        timestamp = self.get_timestamp()
+        # timestamp = self.get_timestamp()
         
-        if task_name:
-            filename = f"metrics_{task_name}_{timestamp}.json"
+        if task_name and exp_name:
+            filename = f"metrics_{task_name}_{exp_name}.json"
+        elif task_name:
+            filename = f"metrics_{task_name}.json"
+        elif exp_name:
+            filename = f"metrics_{exp_name}.json"
         else:
-            filename = f"metrics_joint_{timestamp}.json"
+            filename = f"metrics.json"
         
         save_path = self.metrics_dir / filename
+
+        if save_path.exists():
+            with open(save_path, 'r') as f:
+                entries = json.load(f)
+        else:
+            entries = []
+        
+        # Добавляем новую запись
+        entries.append({
+            "timestamp": self.get_timestamp(),
+            "metrics": metrics
+        })
         
         with open(save_path, 'w') as f:
-            json.dump(metrics, f, indent=4)
-        self.accelerator.print(f"Metrics saved to {save_path}")
+            json.dump(entries, f, indent=4, ensure_ascii=False)
         
+        self.accelerator.print(f"Metrics appended to {save_path} (total entries: {len(entries)})")
+    
 
 class TaskSequentialTrainer:
     """Trainer for sequential task learning (one task at a time)"""
     
-    def __init__(self, accelerator, model, optimizer, llm_tokenizer, beh_tokenizer, input_tokenizer, max_len_llm, max_len_beh, llm_type):
+    def __init__(self, accelerator, model, optimizer, llm_tokenizer, beh_tokenizer, input_tokenizer, max_len_llm, max_len_beh, llm_type, exp_name):
         self.accelerator = accelerator
         self.model = model
         self.optimizer = optimizer
@@ -74,6 +91,7 @@ class TaskSequentialTrainer:
         self.max_len_llm = max_len_llm
         self.max_len_beh = max_len_beh
         self.llm_type = llm_type
+        self.exp_name = exp_name
         self.saver = ModelSaver(accelerator)
     
     def train(self, tasks, num_epochs, batch_size, warmup_ratio):
@@ -113,9 +131,9 @@ class TaskSequentialTrainer:
 
             # Save after each task
             if self.accelerator.is_local_main_process:
-                self.saver.save_model(self.model, task_name, num_epochs)
+                self.saver.save_model(self.model, self.exp_name, task_name, num_epochs)
             if self.accelerator.is_local_main_process and metrics is not None:
-                self.saver.save_metrics(tasks_metrics)
+                self.saver.save_metrics(tasks_metrics, task_name=task_name, exp_name=self.exp_name)
         # if self.accelerator.is_local_main_process:
         self.accelerator.print("Sequential training completed.")
         return self.model
@@ -242,7 +260,7 @@ class TaskSequentialTrainer:
                         )
                         
                         if self.llm_type == "decoder-only":
-                            labels[labels == -100] = tokenizer.pad_token_id
+                            labels[labels == -100] = self.llm_tokenizer.pad_token_id
                         
                         labels_text = self.llm_tokenizer.batch_decode(
                             labels.cpu(),
@@ -259,7 +277,7 @@ class TaskSequentialTrainer:
 class JointTaskTrainer:
     """Trainer for joint learning on all tasks simultaneously"""
     
-    def __init__(self, accelerator, model, optimizer, llm_tokenizer, beh_tokenizer, input_tokenizer, max_len_llm, max_len_beh, llm_type):
+    def __init__(self, accelerator, model, optimizer, llm_tokenizer, beh_tokenizer, input_tokenizer, max_len_llm, max_len_beh, llm_type, exp_name):
         self.accelerator = accelerator
         self.model = model
         self.optimizer = optimizer
@@ -270,6 +288,7 @@ class JointTaskTrainer:
         self.max_len_llm = max_len_llm
         self.max_len_beh = max_len_beh
         self.llm_type = llm_type
+        self.exp_name = exp_name
         self.saver = ModelSaver(accelerator)
     
     def train(self, json_path, num_epochs, batch_size, warmup_ratio):
@@ -310,7 +329,7 @@ class JointTaskTrainer:
             
             if self.accelerator.is_local_main_process:
                 self.accelerator.print(f"Epoch {epoch+1} Average Loss: {avg_loss:.4f}")
-                self.saver.save_model(self.model, epoch=epoch+1)
+                self.saver.save_model(self.model, self.exp_name, epoch=epoch+1)
         self.accelerator.print("Joint training completed.")
         return self.model
     
@@ -364,7 +383,7 @@ class JointTaskTrainer:
 class ModelEvaluator:
     """Evaluator for model performance on multiple tasks"""
     
-    def __init__(self, accelerator, model, llm_tokenizer, beh_tokenizer, input_tokenizer, max_len_llm, max_len_beh, llm_type):
+    def __init__(self, accelerator, model, llm_tokenizer, beh_tokenizer, input_tokenizer, max_len_llm, max_len_beh, llm_type, exp_name):
         self.accelerator = accelerator
         self.model = model
         self.llm_tokenizer = llm_tokenizer
@@ -373,6 +392,7 @@ class ModelEvaluator:
         self.max_len_llm = max_len_llm
         self.max_len_beh = max_len_beh
         self.llm_type = llm_type
+        self.exp_name = exp_name
         self.saver = ModelSaver(accelerator)
     
     def evaluate(self, tasks, batch_size=64):
@@ -396,7 +416,7 @@ class ModelEvaluator:
 
         # Save all metrics together
         if self.accelerator.is_local_main_process and metrics is not None:
-            self.saver.save_metrics(tasks_metrics)
+            self.saver.save_metrics(tasks_metrics, exp_name=self.exp_name)
         return tasks_metrics
     
     def _prepare_data_loader(self, json_path, batch_size):
@@ -433,12 +453,12 @@ class ModelEvaluator:
                         llm_attention_mask =batch["llm_attention_mask"],
                         beh_input_ids=batch["beh_input_ids"],
                         beh_attention_mask=batch["beh_attention_mask"],
-                        max_length=150,
-                        do_sample=True,
+                        max_new_tokens=10,
+                        do_sample=False,
                         temperature=0.1,
                         repetition_penalty=1.2,
-                        # num_beams=5,
-                        # early_stopping=True,
+                        num_beams=2,
+                        early_stopping=True,
                         eos_token_id=self.llm_tokenizer.eos_token_id,
                         pad_token_id=self.llm_tokenizer.pad_token_id,
                     )
@@ -459,7 +479,7 @@ class ModelEvaluator:
                         )
                         
                         if self.llm_type == "decoder-only":
-                            labels[labels == -100] = tokenizer.pad_token_id
+                            labels[labels == -100] = self.llm_tokenizer.pad_token_id
                             
                         labels_text = self.llm_tokenizer.batch_decode(
                             labels.cpu(),
