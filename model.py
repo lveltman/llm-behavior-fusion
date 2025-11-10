@@ -94,7 +94,7 @@ class FusionModel(nn.Module):
         # self.instruction_embedding = nn.Parameter(torch.randn(1, 1, llm_hidden_size))
         
         # Множественные токены (8-16)
-        self.num_instruction_tokens = 8 #num_instruction_tokens
+        self.num_instruction_tokens = 16 #num_instruction_tokens
         instruction_init = torch.zeros(1, self.num_instruction_tokens, llm_hidden_size)
         nn.init.xavier_normal_(instruction_init)
         self.instruction_embedding = nn.Parameter(instruction_init)
@@ -110,7 +110,7 @@ class FusionModel(nn.Module):
         prefix_embs = self.prefix_proj(qformer_output)  # (B, Q, hidden_size)
         instruction_embs = self.instruction_embedding.expand(input_ids.size(0), -1, -1)
 
-        instruction_embs = self.instruction_processor(instruction_embs)
+        # instruction_embs = self.instruction_processor(instruction_embs)
         
         # Получаем эмбеддинги исходных токенов
         with torch.no_grad():

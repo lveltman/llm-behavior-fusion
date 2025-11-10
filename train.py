@@ -24,18 +24,22 @@ if __name__ == "__main__":
     warmup_ratio = 0.07331269248091292
     num_queries = 8
 
-    beh_enc_name = "BAAI/bge-base-en-v1.5"
+    lr = 3.4324099556985233e-06
+    warmup_ratio = 0.13659563587927478
+    weight_decay = 0.00020176083553103118
+
+    # beh_enc_name = "BAAI/bge-base-en-v1.5"
     # beh_enc_name = "facebook/contriever"
     # beh_enc_name = "Alibaba-NLP/gte-large-en-v1.5"
     beh_enc_name = "BAAI/bge-m3"
     # llm_name = "google/flan-t5-xl"
-    # llm_name = "google/flan-t5-xxl"
-    llm_name = "Qwen/Qwen2-7B"
+    llm_name = "google/flan-t5-xxl"
+    # llm_name = "Qwen/Qwen2-7B"
 
     # warmup_ratio = 0.053494464405939135, 'num_queries': 11, 'weight_decay': 0.0010468580083440608, 'lr': 0.00048789888760538466, 'beta1': 0.9165027242838241, 'beta2': 0.9412469564025118}
     
 
-    exp_name = "bge_m3_qwen_new_qformer"
+    exp_name = "bge_m3_xxlflan_new_qformer"
     
     max_len_beh = 512 if "base" in beh_enc_name else 1024
     llm_type = "decoder-only" if 'qwen' in llm_name.lower() else "encoder-decoder"

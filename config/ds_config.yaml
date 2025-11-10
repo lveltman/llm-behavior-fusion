@@ -4,12 +4,18 @@ deepspeed_config:
   # deepspeed_config_file: config/deepspeed_config_stage2.json
   zero3_init_flag: false
   zero3_save_16bit_model: true
-  gradient_accumulation_steps: 1
+  gradient_accumulation_steps: 2
   gradient_clipping: 1.0
   offload_optimizer_device: none
   offload_param_device: none
-  zero_stage: 2
-  train_micro_batch_size_per_gpu: 8  # = batch_size DataLoader
+  # zero_stage: 2
+  zero_optimization:
+    stage: 2
+    offload_optimizer:
+      device: cpu
+    offload_param: 
+      device: cpu
+  train_micro_batch_size_per_gpu: 2  # = batch_size DataLoader
   train_batch_size: 8            # = batch_size * num_gpus
 
 distributed_type: DEEPSPEED

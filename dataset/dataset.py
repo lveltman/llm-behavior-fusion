@@ -94,7 +94,7 @@ class LaMPDataset(Dataset):
         profile_text = item["behavior_profile_text"]
 
         profile_text = " ".join(profile_text) if isinstance(profile_text, list) else profile_text
-
+    
         beh_enc = self.beh_tokenizer(
             profile_text, truncation=True, padding="max_length",
             max_length=self.max_len_beh, return_tensors="pt"

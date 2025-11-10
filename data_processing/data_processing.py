@@ -18,8 +18,8 @@ def normalize_profile(profile_item):
     parts = []
     if "title" in profile_item and profile_item["title"]:
         parts.append(f"TITLE: {profile_item['title']}")
-    if "abstract" in profile_item and profile_item["abstract"]:
-        parts.append(f"ABSTRACT: {profile_item['abstract']}")
+    # if "abstract" in profile_item and profile_item["abstract"]:
+    #     parts.append(f"ABSTRACT: {profile_item['abstract']}")
     # if "text" in profile_item and profile_item["text"]:
     #     parts.append(f"TEXT: {profile_item['text']}")
     # if "score" in profile_item and profile_item["score"] not in (None, ""):
@@ -78,16 +78,25 @@ def preprocess_all_lamp(datasets, base_dir="data", split="train", save_path="dat
 datasets = [1, 3, 4, 5, 7]
 datasets = [1]
 for dataset in datasets:
+    # https://ciir.cs.umass.edu/downloads/LaMP/time/LaMP_1/train/
     base_url = f"https://ciir.cs.umass.edu/downloads/LaMP/time/LaMP_{dataset}/train/"
-    os.makedirs(f"..data/LaMP_{dataset}/train", exist_ok=True)
-    os.makedirs(f"../data/LaMP_{dataset}/dev", exist_ok=True)
+    base_path = f"data/LaMP_{dataset}"
+    train_path = os.path.join(base_path, "train")
+    dev_path = os.path.join(base_path, "dev")
     
-    download_file(base_url + "train_questions.json", f"../data/LaMP_{dataset}/train/train_questions.json")
-    download_file(base_url + "train_outputs.json", f"../data/LaMP_{dataset}/train/train_outputs.json")
+    print(f"Creating directories for dataset {dataset}:")
+    print("  ->", train_path)
+    print("  ->", dev_path)
+    
+    os.makedirs(train_path, exist_ok=True)
+    os.makedirs(dev_path, exist_ok=True)
+    
+    download_file(base_url + "train_questions.json", os.path.join(train_path, "train_questions.json"))
+    download_file(base_url + "train_outputs.json", os.path.join(train_path, "train_outputs.json"))
 
     base_url = f"https://ciir.cs.umass.edu/downloads/LaMP/time/LaMP_{dataset}/dev/"
-    download_file(base_url + "dev_questions.json", f"../data/LaMP_{dataset}/dev/dev_questions.json")
-    download_file(base_url + "dev_outputs.json", f"../data/LaMP_{dataset}/dev/dev_outputs.json")
+    download_file(base_url + "dev_questions.json", os.path.join(dev_path, "dev_questions.json"))
+    download_file(base_url + "dev_outputs.json", os.path.join(dev_path, "dev_outputs.json"))
 
 
 dataset_ids = [1, 3, 4, 5, 7]
@@ -97,16 +106,16 @@ dataset_ids = [1]
 for dataset_id in dataset_ids:
     preprocess_all_lamp(
         datasets=[dataset_id],
-        base_dir="../data",
+        base_dir="data",
         split="train",
-        save_path=f"../data/LaMP_{dataset_id}/train.json",
-        num_profiles=16
+        save_path=f"data/LaMP_{dataset_id}/train.json",
+        num_profiles=32
     )
     preprocess_all_lamp(
         datasets=[dataset_id],
-        base_dir="../data",
+        base_dir="data",
         split="dev",
-        save_path=f"../data/LaMP_{dataset_id}/dev.json",
-        num_profiles=16
+        save_path=f"data/LaMP_{dataset_id}/dev.json",
+        num_profiles=32
     )
 
