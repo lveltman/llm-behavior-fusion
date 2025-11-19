@@ -7,7 +7,7 @@ from accelerate import Accelerator
 from transformers import AutoTokenizer
 
 
-from model import BehavioralEncoder, QFormer, FusionModel, BehavioralTwin, MemoryOptimizedBehavioralTwin
+from model import BehavioralEncoder, SimpleTextEncoder, QFormer, FusionModel, BehavioralTwin, MemoryOptimizedBehavioralTwin
 from trainers.trainer import TaskSequentialTrainer, JointTaskTrainer, ModelEvaluator, ModelSaver
 
 def objective(trial):
@@ -36,8 +36,8 @@ def objective(trial):
     # beh_enc_name = "Alibaba-NLP/gte-large-en-v1.5"
     beh_enc_name = "BAAI/bge-m3"
     # llm_name = "google/flan-t5-xl"
-    # llm_name = "google/flan-t5-xxl"
-    llm_name = "Qwen/Qwen2-7B"
+    llm_name = "google/flan-t5-xxl"
+    # llm_name = "Qwen/Qwen2-7B"
     
     # Фиксированные параметры для ускорения оптимизации
     mode = "sequential"
@@ -61,7 +61,7 @@ def objective(trial):
         beh_tokenizer = AutoTokenizer.from_pretrained(beh_enc_name)
 
         beh_encoder = BehavioralEncoder(beh_enc_name)
-        input_encoder = BehavioralEncoder(beh_enc_name)
+        input_encoder = SimpleTextEncoder(beh_enc_name)
         hidden_size = beh_encoder.text_encoder.config.hidden_size
 
         qformer = QFormer(hidden_size=hidden_size, num_queries=num_queries)

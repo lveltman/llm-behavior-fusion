@@ -6,7 +6,7 @@ from accelerate import Accelerator
 from transformers import AutoTokenizer
 from bitsandbytes.optim import AdamW8bit
 
-from model import BehavioralEncoder, QFormer, FusionModel, BehavioralTwin, MemoryOptimizedBehavioralTwin
+from model import BehavioralEncoder, QFormer, FusionModel, BehavioralTwin, MemoryOptimizedBehavioralTwin, SimpleTextEncoder
 from trainers.trainer import TaskSequentialTrainer, JointTaskTrainer, ModelEvaluator, ModelSaver
 
 
@@ -62,7 +62,7 @@ if __name__ == "__main__":
     beh_tokenizer = AutoTokenizer.from_pretrained(beh_enc_name)
 
     beh_encoder = BehavioralEncoder(beh_enc_name)
-    input_encoder = BehavioralEncoder(beh_enc_name)
+    input_encoder = SimpleTextEncoder(beh_enc_name)
     hidden_size = beh_encoder.text_encoder.config.hidden_size
 
     qformer = QFormer(hidden_size=hidden_size, num_queries=num_queries)
