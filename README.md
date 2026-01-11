@@ -49,9 +49,7 @@ resume_from = "saved/checkpoints/model_joint_YYYYMMDD_HHMMSS.pt"
 * **`ModelEvaluator`** — единая точка для измерения метрик.
 * **`ModelSaver`** — сохранение моделей в нужном формате.
 
-### Что можно улучшить
+### Данные
 
-* Разморозить несколько слоёв LLM или encoder.
-* Подключить LoRA.
-* Попробовать разные LR для разных компонентов: \~1e-3 для prefix\_proj, \~1e-4 для QFormer.
-* Добавить cosine scheduler с warmup.
+- [LaMP 1: Personalized Citation Identification](https://lamp-benchmark.github.io/download)
+- [Research Papers Dataset](https://www.kaggle.com/datasets/nechbamohammed/research-papers-dataset)

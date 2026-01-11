@@ -1,14 +1,30 @@
 import torch
 import numpy as np
-from sklearn.metrics import accuracy_score, f1_score, mean_absolute_error, mean_squared_error
 from rouge_score import rouge_scorer
+from sklearn.metrics import (
+    accuracy_score, f1_score, precision_score, recall_score,
+    mean_absolute_error, mean_squared_error
+)
 
 def compute_metric(metric_name, preds, labels, tokenizer):
     print(f"preds = {preds}")
     print(f"labels = {labels}")
     print()
     if metric_name == "accuracy":
-        return accuracy_score(labels, preds)
+        labels = np.array(labels)
+        preds = np.array(preds)
+        
+        # Мы не предполагаем бинарность по числу классов, если метки не 0/1
+        # Просто используем weighted и macro — они работают всегда
+        return {
+            "accuracy": accuracy_score(labels, preds),
+            "f1_weighted": f1_score(labels, preds, average="weighted", zero_division=0),
+            "f1_macro": f1_score(labels, preds, average="macro", zero_division=0),
+            "precision_weighted": precision_score(labels, preds, average="weighted", zero_division=0),
+            "precision_macro": precision_score(labels, preds, average="macro", zero_division=0),
+            "recall_weighted": recall_score(labels, preds, average="weighted", zero_division=0),
+            "recall_macro": recall_score(labels, preds, average="macro", zero_division=0),
+        }
 
     elif metric_name == "accuracy_f1":
         return {

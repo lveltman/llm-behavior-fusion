@@ -6,16 +6,15 @@ import optuna
 from accelerate import Accelerator
 from transformers import AutoTokenizer
 
-
-from model import BehavioralEncoder, SimpleTextEncoder, QFormer, FusionModel, BehavioralTwin, MemoryOptimizedBehavioralTwin
+from model import BehavioralEncoder, QFormer, FusionModel, BehavioralTwin, MemoryOptimizedBehavioralTwin, SimpleTextEncoder
 from trainers.trainer import TaskSequentialTrainer, JointTaskTrainer, ModelEvaluator, ModelSaver
 
 def objective(trial):
     # Оптимизация гиперпараметров
-    lr = trial.suggest_float("lr", 1e-6, 1e-3, log=True)
-    batch_size = 2 #trial.suggest_categorical("batch_size", [2, 4, 8, 16])
-    warmup_ratio = trial.suggest_float("warmup_ratio", 0.01, 0.2, log=True)
-    num_queries = 8
+    lr = trial.suggest_float("lr", 1e-5, 1e-2, log=True)
+    batch_size = 8 #trial.suggest_categorical("batch_size", [2, 4, 8, 16])
+    warmup_ratio = trial.suggest_float("warmup_ratio", 0.01, 0.3, log=True)
+    num_queries = 16
     weight_decay = trial.suggest_float("weight_decay", 1e-6, 1e-2, log=True)
     
     # Оптимизация архитектурных параметров
@@ -29,19 +28,19 @@ def objective(trial):
     #     "Alibaba-NLP/gte-large-en-v1.5"
     # ])
     
-    # beh_enc_name = "BAAI/bge-base-en-v1.5"
+    beh_enc_name = "BAAI/bge-base-en-v1.5"
     # llm_name = "google/flan-t5-xxl"
         # beh_enc_name = "BAAI/bge-base-en-v1.5"
     # beh_enc_name = "facebook/contriever"
     # beh_enc_name = "Alibaba-NLP/gte-large-en-v1.5"
-    beh_enc_name = "BAAI/bge-m3"
+    # beh_enc_name = "BAAI/bge-m3"
     # llm_name = "google/flan-t5-xl"
-    llm_name = "google/flan-t5-xxl"
-    # llm_name = "Qwen/Qwen2-7B"
+    # llm_name = "google/flan-t5-xxl"
+    llm_name = "Qwen/Qwen2-7B"
     
     # Фиксированные параметры для ускорения оптимизации
     mode = "sequential"
-    num_epochs = 2  # Меньше эпох для быстрой оптимизации
+    num_epochs = 5  # Меньше эпох для быстрой оптимизации
     use_memory_optimization = False
     exp_name = f"optuna_trial_{trial.number}"
 
@@ -51,7 +50,10 @@ def objective(trial):
     llm_type = "decoder-only" if 'qwen' in llm_name.lower() else "encoder-decoder"
     
     tasks = {
-        "LaMP-1": {"json_path": "data/LaMP_1/train.json", "metric": "accuracy"},
+        # "LaMP-1": {"json_path": "data/LaMP_1/train.json", "metric": "accuracy"},
+        "LaMP-1": {"train_json_path": "data/LaMP_1/train_all_titles.json",
+           "val_json_path":  "data/LaMP_1/dev_all_titles.json", #"data/LaMP_1/val_kaggle_titles.json", 
+           "metric": "accuracy"},
         # "LaMP-3": {"json_path": "data/LaMP_3/train.json", "metric": "regression"},
     }
     
@@ -78,7 +80,17 @@ def objective(trial):
             )
 
         model.train()
+
+
+        def count_params(module):
+            return sum(p.numel() for p in module.parameters() if p.requires_grad)
         
+        print("input_encoder:", count_params(model.input_encoder))
+        print("qformer:", count_params(model.qformer))
+        print("prefix_proj:", count_params(model.fusion.prefix_proj))
+        # print("instruction:", model.fusion.instruction_embedding.numel())
+    
+    
         # Оптимизатор с оптимизированными параметрами
         trainable_params = [p for p in model.parameters() if p.requires_grad]
         optimizer = torch.optim.AdamW(trainable_params, lr=lr, weight_decay=weight_decay)
@@ -89,7 +101,7 @@ def objective(trial):
             llm_tokenizer, beh_tokenizer, beh_tokenizer,
             max_len_llm, max_len_beh, llm_type, exp_name
         )
-        
+
         model = trainer.train(tasks, num_epochs, batch_size, warmup_ratio)
         
         # Оценка модели
@@ -238,7 +250,6 @@ if __name__ == "__main__":
     print("Starting Optuna optimization...")
     study = run_optuna_optimization()
     
-    # Сохраняем исследование
     import joblib
     joblib.dump(study, "optuna_study.pkl")
     print("Study saved to optuna_study.pkl")

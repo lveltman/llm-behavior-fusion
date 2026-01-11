@@ -15,8 +15,8 @@ deepspeed_config:
       device: cpu
     offload_param: 
       device: cpu
-  train_micro_batch_size_per_gpu: 2  # = batch_size DataLoader
-  train_batch_size: 8            # = batch_size * num_gpus
+  train_micro_batch_size_per_gpu: 4  # = batch_size DataLoader
+  train_batch_size: 16            # = batch_size * num_gpus
 
 distributed_type: DEEPSPEED
 downcast_bf16: 'no'
