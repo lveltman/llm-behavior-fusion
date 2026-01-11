@@ -1,4 +1,4 @@
-# BehavioralTwin: Q-Former Based Personalization of LLMs
+# Behavioral Twin LLM Fusion — Гибкая Персонализация LLM через Q-Former
 
 > **Beyond PPlug**: We replace simple weighted averaging with a **Q-Former cross-attention module** to better model user behavior for LLM personalization.
 
